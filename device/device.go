@@ -61,7 +61,7 @@ func Open(path string, options ...Option) (*Device, error) {
 	}
 
 	switch {
-	case cap.IsVideoCaptureSupported():
+	case cap.IsVideoCaptureMultiplanarSupported() || cap.IsVideoCaptureSupported():
 		// setup capture parameters and chan for captured data
 		if dev.config.useMPlane {
 			dev.bufType = v4l2.BufTypeVideoCaptureMPlane
@@ -69,7 +69,7 @@ func Open(path string, options ...Option) (*Device, error) {
 			dev.bufType = v4l2.BufTypeVideoCapture
 		}
 		dev.output = make(chan []byte, dev.config.bufSize)
-	case cap.IsVideoOutputSupported():
+	case cap.IsVideoOutputSupported() || cap.IsVideoOutputMultiplanerSupported():
 		if dev.config.useMPlane {
 			dev.bufType = v4l2.BufTypeVideoOutputMPlane
 		} else {
@@ -239,7 +239,7 @@ func (d *Device) GetPixFormat() (v4l2.PixFormat, error) {
 
 // GetPixFormatMPlane retrieves mplane pixel format info for device
 func (d *Device) GetPixFormatMPlane() (v4l2.PixFormatMPlane, error) {
-	if !d.cap.IsVideoCaptureSupported() {
+	if !d.cap.IsVideoCaptureMultiplanarSupported() {
 		return v4l2.PixFormatMPlane{}, v4l2.ErrorUnsupportedFeature
 	}
 
@@ -269,7 +269,7 @@ func (d *Device) SetPixFormat(pixFmt v4l2.PixFormat) error {
 
 // SetPixFormatMPlane sets the mplane pixel format for the associated device.
 func (d *Device) SetPixFormatMPlane(pixFmtMp v4l2.PixFormatMPlane) error {
-	if !d.cap.IsVideoCaptureSupported() {
+	if !d.cap.IsVideoCaptureMultiplanarSupported() {
 		return v4l2.ErrorUnsupportedFeature
 	}
 
@@ -291,7 +291,7 @@ func (d *Device) GetFormatDescription(idx uint32, bufType uint32) (v4l2.FormatDe
 
 // GetFormatDescriptions returns all possible format descriptions for device
 func (d *Device) GetFormatDescriptions(bufType uint32) ([]v4l2.FormatDescription, error) {
-	if !d.cap.IsVideoCaptureSupported() {
+	if !(d.cap.IsVideoCaptureSupported() || d.cap.IsVideoCaptureMultiplanarSupported()) {
 		return nil, v4l2.ErrorUnsupportedFeature
 	}
 
@@ -464,10 +464,15 @@ func (d *Device) startStreamLoop(ctx context.Context) error {
 					panic(fmt.Sprintf("device: stream loop dequeue: %s", err))
 				}
 
+				bytesused := buff.BytesUsed
+				if buff.Type == v4l2.BufTypeVideoCaptureMPlane || buff.Type == v4l2.BufTypeVideoOutputMPlane {
+					bytesused = buff.Info.Planes[buff.Index].BytesUsed
+				}
+
 				// copy mapped buffer (copying avoids polluted data from subsequent dequeue ops)
 				if buff.Flags&v4l2.BufFlagMapped != 0 && buff.Flags&v4l2.BufFlagError == 0 {
-					frame = make([]byte, buff.BytesUsed)
-					if n := copy(frame, d.buffers[buff.Index][:buff.BytesUsed]); n == 0 {
+					frame = make([]byte, bytesused)
+					if n := copy(frame, d.buffers[buff.Index][:bytesused]); n == 0 {
 						d.output <- []byte{}
 					}
 					d.output <- frame
